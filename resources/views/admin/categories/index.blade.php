@@ -1,0 +1,222 @@
+@extends('layouts.app')
+@section('title','Categories')
+
+@section('content')
+<div class="section-header">
+  <h1>Categories</h1>
+  <div class="section-header-breadcrumb">
+    <a href="{{ route('category.create') }}" class="btn btn-primary">
+      <i class="fas fa-plus"></i> Add Category
+    </a>
+  </div>
+</div>
+
+@if(session('success'))
+  <div class="alert alert-success">{{ session('success') }}</div>
+@endif
+@if(session('error'))
+  <div class="alert alert-danger">{{ session('error') }}</div>
+@endif
+
+<div class="card">
+  <div class="card-header">
+    <div class="w-100">
+      <div class="form-row align-items-end">
+        <div class="form-group col-md-5">
+          <label class="mb-1">Search (name/slug)</label>
+          <input id="q" type="text" class="form-control" placeholder="e.g. electronics">
+        </div>
+        <div class="form-group col-md-3">
+          <label class="mb-1">Sort</label>
+          <select id="f-sort" class="form-control">
+            <option value="">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="name_asc">Name A-Z</option>
+            <option value="name_desc">Name Z-A</option>
+            <option value="products_desc">Products ↓</option>
+            <option value="products_asc">Products ↑</option>
+          </select>
+        </div>
+        <div class="form-group col-md-2">
+          <label class="mb-1">Limit</label>
+          <select id="f-limit" class="form-control">
+            <option>10</option>
+            <option selected>20</option>
+            <option>50</option>
+            <option>100</option>
+          </select>
+        </div>
+      </div>
+      <div class="d-flex">
+        <button id="btn-apply" class="btn btn-secondary mr-2"><i class="fas fa-filter"></i> Apply</button>
+        <button id="btn-reset" class="btn btn-light"><i class="fas fa-undo"></i> Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card-body table-responsive p-0">
+    <table class="table table-striped mb-0">
+      <thead>
+        <tr>
+          <th style="width:80px">#</th>
+          <th>Name</th>
+          <th>Slug</th>
+          <th style="width:140px" class="text-center">Products</th>
+          <th style="width:160px" class="text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="categories-tbody">
+        <tr><td colspan="5" class="text-center text-muted">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card-footer d-flex justify-content-between align-items-center">
+    <small id="summary" class="text-muted"></small>
+    <nav id="categories-pagination"></nav>
+  </div>
+</div>
+
+<div id="api-error" class="alert alert-danger d-none"></div>
+@endsection
+
+@push('scripts')
+<script>
+(function(){
+  const API_URL = '/api/categories';
+
+  // elements
+  const $q       = document.getElementById('q');
+  const $sort    = document.getElementById('f-sort');
+  const $limit   = document.getElementById('f-limit');
+  const $apply   = document.getElementById('btn-apply');
+  const $reset   = document.getElementById('btn-reset');
+  const $tbody   = document.getElementById('categories-tbody');
+  const $pager   = document.getElementById('categories-pagination');
+  const $summary = document.getElementById('summary');
+  const $apiErr  = document.getElementById('api-error');
+
+  function escapeHtml(s){
+    return String(s ?? '')
+      .replaceAll('&','&amp;').replaceAll('<','&lt;')
+      .replaceAll('>','&gt;').replaceAll('"','&quot;')
+      .replaceAll("'","&#039;");
+  }
+  function debounce(fn, ms=300){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; }
+
+  function rowHtml(item){
+    const editUrl = `{{ url('category') }}/${item.id}/edit`;
+    const destroyUrl = `{{ url('category') }}/${item.id}`;
+    return `
+      <tr>
+        <td>${item.id}</td>
+        <td><a href="${editUrl}"><strong>${escapeHtml(item.name)}</strong></a></td>
+        <td>${escapeHtml(item.slug)}</td>
+        <td class="text-center">${item.products_count ?? 0}</td>
+        <td class="text-right">
+          <a href="${editUrl}" class="btn btn-sm btn-warning"><i class="fas fa-edit"></i></a>
+          <form action="${destroyUrl}" method="POST" class="d-inline" onsubmit="return confirm('Delete this category?')">
+            @csrf @method('DELETE')
+            <button class="btn btn-sm btn-danger"><i class="fas fa-trash"></i></button>
+          </form>
+        </td>
+      </tr>
+    `;
+  }
+
+  function renderTable(items){
+    if(!items || items.length===0){
+      $tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">No data</td></tr>`;
+      return;
+    }
+    $tbody.innerHTML = items.map(rowHtml).join('');
+  }
+
+  function renderPager(meta){
+    if(!meta){ $pager.innerHTML=''; return; }
+    const cur = meta.current_page, last = meta.last_page;
+    const disPrev = cur<=1 ? ' disabled' : '';
+    const disNext = cur>=last ? ' disabled' : '';
+    $pager.innerHTML = `
+      <ul class="pagination mb-0">
+        <li class="page-item${disPrev}">
+          <a class="page-link" href="#" data-page="1">&laquo;&laquo;</a>
+        </li>
+        <li class="page-item${disPrev}">
+          <a class="page-link" href="#" data-page="${cur-1}">&laquo;</a>
+        </li>
+        <li class="page-item disabled"><span class="page-link">Page ${cur} / ${last}</span></li>
+        <li class="page-item${disNext}">
+          <a class="page-link" href="#" data-page="${cur+1}">&raquo;</a>
+        </li>
+        <li class="page-item${disNext}">
+          <a class="page-link" href="#" data-page="${last}">&raquo;&raquo;</a>
+        </li>
+      </ul>
+    `;
+    $pager.querySelectorAll('[data-page]').forEach(a=>{
+      a.addEventListener('click', e=>{
+        e.preventDefault();
+        const p = Number(a.dataset.page);
+        if(p>=1 && p<=last) load(p);
+      });
+    });
+  }
+
+  function renderSummary(meta){
+    if(!meta){ $summary.textContent=''; return; }
+    $summary.textContent = `Showing page ${meta.current_page} of ${meta.last_page} — total ${meta.total} items`;
+  }
+
+  function showLoading(){
+    $tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">Loading…</td></tr>`;
+  }
+  function showError(msg){
+    $apiErr.textContent = msg || 'Failed to load data.';
+    $apiErr.classList.remove('d-none');
+    setTimeout(()=> $apiErr.classList.add('d-none'), 4000);
+  }
+
+  function buildQuery(page){
+    const params = new URLSearchParams();
+    params.set('page', page || 1);
+    params.set('limit', $limit.value || 20);
+
+    const s = ($q.value || '').trim();
+    if(s) params.set('search', s);
+
+    const sort = ($sort.value || '').trim();
+    if(sort) params.set('sort', sort);
+
+    return params.toString();
+  }
+
+  async function load(page=1){
+    showLoading();
+    try{
+      const res = await fetch(`${API_URL}?${buildQuery(page)}`, { headers: { 'Accept':'application/json' }});
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      renderTable(json.data || []);
+      renderPager(json.meta);
+      renderSummary(json.meta);
+    }catch(err){
+      console.error(err);
+      showError(err.message);
+    }
+  }
+
+  const debounced = debounce(()=>load(1), 300);
+  $q.addEventListener('input', debounced);
+  $sort.addEventListener('change', ()=>load(1));
+  $limit.addEventListener('change', ()=>load(1));
+  $apply.addEventListener('click', ()=>load(1));
+  $reset.addEventListener('click', ()=>{
+    $q.value=''; $sort.value=''; $limit.value='20';
+    load(1);
+  });
+
+  load(1);
+})();
+</script>
+@endpush
